@@ -19,8 +19,8 @@ from ai_classifier import classify_post_smart as classify_post
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
+API_ID = os.getenv("API_ID", "35554083")
+API_HASH = os.getenv("API_HASH", "f3308dd71c039f71e565eabe1938e8f8")
 
 if not API_ID or not API_HASH:
     print("=" * 60)

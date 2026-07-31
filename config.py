@@ -2,13 +2,15 @@ import os
 import re
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения из .env
+# Загрузка переменных окружения из .env (если файл существует)
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# Токен бота (с надежным fallback на случай отсутствия .env на сервере хостинга / Render)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8835292843:AAGTbcKGHVB1H6Pe3dfyTJwJsSvkNOYN8kw").strip()
 
 # Очищаем список каналов от лишних символов (ссылок https://t.me/ или знака @)
-raw_channels = os.getenv("CHANNELS", "").split(",")
+raw_channels_str = os.getenv("CHANNELS", "cyexchange, nedvizhka_Ciprus")
+raw_channels = raw_channels_str.split(",")
 CHANNELS = []
 for ch in raw_channels:
     ch = ch.strip()
@@ -19,9 +21,9 @@ for ch in raw_channels:
         CHANNELS.append(ch)
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))
-MAX_PRICE = int(os.getenv("MAX_PRICE", 1000))
+MAX_PRICE = int(os.getenv("MAX_PRICE", 600))
 DEFAULT_EXCHANGE_LIMIT = int(os.getenv("DEFAULT_EXCHANGE_LIMIT", 50000))
 
 # Ключи для реальных нейросетей (OpenAI или Google Gemini)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LAYIDCIHIqdEBoKmJeS6hD9VHBvxLoFcH3HrUNhPJB5w").strip()
