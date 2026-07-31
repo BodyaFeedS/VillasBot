@@ -17,8 +17,30 @@ from aiogram import Bot, Dispatcher
 from handlers import start, villas
 from parser import notify_users
 from ai_classifier import classify_post_smart as classify_post
+from aiohttp import web
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
+
+
+async def run_dummy_http_server():
+    """
+    Легковесный HTTP-сервер для Render.com (Web Service),
+    чтобы сервис успешно проходил проверку порта ($PORT) и работал бесплатно 24/7!
+    """
+    port = int(os.getenv("PORT", 8080))
+    app = web.Application()
+
+    async def handle_ping(request):
+        return web.Response(text="✅ Villas Bot & Userbot are running 24/7!", status=200)
+
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"🌐 [HTTP] Веб-сервер для Render.com успешно запущен на порту {port} (0.0.0.0:{port})")
 
 
 async def scan_history_on_startup(client: TelegramClient):
@@ -63,8 +85,8 @@ async def run_userbot(bot: Bot):
     """
     Запуск Telethon-клиента для мониторинга любых чатов и каналов Telegram от вашего аккаунта.
     """
-    API_ID = os.getenv("API_ID")
-    API_HASH = os.getenv("API_HASH")
+    API_ID = os.getenv("API_ID", "35554083")
+    API_HASH = os.getenv("API_HASH", "f3308dd71c039f71e565eabe1938e8f8")
     if not API_ID or not API_HASH:
         logging.error("⚠️ API_ID или API_HASH не указаны в файле .env! Юзербот отключен.")
         return
@@ -128,10 +150,11 @@ async def main():
     logging.info("=====================================================")
     bot = Bot(token=config.BOT_TOKEN)
 
-    # Запускаем одновременно оба процесса в одном цикле asyncio:
+    # Запускаем одновременно: Telegram-бота, Юзербота и веб-сервер для проверки Render.com
     await asyncio.gather(
         run_bot(bot),
-        run_userbot(bot)
+        run_userbot(bot),
+        run_dummy_http_server()
     )
 
 
