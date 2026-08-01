@@ -25,21 +25,44 @@ def normalize_prices_in_text(text: str) -> str:
 
 def is_other_city(text: str) -> bool:
     """
-    Проверяет, что объявление относится исключительно к ДРУГОМУ городу Кипра (Не Пафос):
-    Лимассол, Ларнака, Никосия, Айя-Напа, Протарас.
+    Проверяет, что объявление относится к ЛЮБОМУ ДРУГОМУ городу Кипра (Не Пафос):
+    Лимасол, Лимассол, Ларнака, Никосия, Айя-Напа, Протарас, Фамагуста, Кирения,
+    а также популярные районы Лимасола (Агиос Тихонас, Гермасойя, Муттаяка и др.).
     """
     text_lower = text.lower()
     other_cities = [
-        "лимассол", "limassol", "ларнак", "larnac", "никоси", "nicosi",
-        "айя-нап", "ayia", "протарас", "protaras"
+        "лимассол", "лимасол", "лимасоле", "лимассоле", "limassol", "limasol",
+        "#лимасол", "#лимассол", "агиос тихонас", "agios tychonas",
+        "гермасой", "germasogeia", "мутаяк", "mouttagiaka", "пиргос", "pyrgos",
+        "парекклис", "parekklisia", "ороклин", "oroklini", "пила", "pyla",
+        "ларнак", "ларнаке", "larnac", "#ларнака",
+        "никоси", "никосие", "nicosi", "#никосия",
+        "айя-нап", "ayia", "#айянапа",
+        "протарас", "protaras", "#протарас",
+        "фамагуст", "famagust", "кирени", "kyrenia"
     ]
-    has_other = any(city in text_lower for city in other_cities)
-    paphos_cities = [
-        "пафос", "paphos", "pafos", "#пафос",
-        "тала", "хлорак", "пейя", "кония", "емба", "киссонерг", "аргак", "като", "цада", "героскипу", "епископи", "полис"
+    return any(city in text_lower for city in other_cities)
+
+
+def is_paphos_location(text: str) -> bool:
+    """
+    Строгая проверка: объявление должно относиться исключительно к Пафосу или его пригородам
+    и НЕ содержать упоминаний других городов или районов Лимасола/Ларнаки/Никосии.
+    """
+    if is_other_city(text):
+        return False
+
+    text_lower = text.lower()
+    paphos_keywords = [
+        "пафос", "paphos", "pafos", "#пафос", "#paphos",
+        "тала", "tala", "хлорак", "chlorak", "пейя", "pegeia", "peyia",
+        "кония", "konia", "емба", "emba", "киссонерг", "kissonerg",
+        "аргак", "като пафос", "цада", "tsada", "героскипу", "geroskipou",
+        "епископи", "полис", "polis", "афродита", "aphrodite",
+        "корал бэй", "coral bay", "mandria", "мандрия", "анавита",
+        "куклия", "kouklia", "пейе", "тале", "хлораке"
     ]
-    has_paphos = any(city in text_lower for city in paphos_cities)
-    return has_other and not has_paphos
+    return any(kw in text_lower for kw in paphos_keywords)
 
 
 def is_seeking_housing(text: str) -> bool:
@@ -61,7 +84,7 @@ def is_seeking_housing(text: str) -> bool:
 def is_property_for_sale(text: str) -> bool:
     """
     100% гарантированная проверка, что объявление о ПРОДАЖЕ недвижимости (а не аренда!):
-    1. Если указана любая цена > 15 000 € -> это ПРОДАЖА!
+    1. Если указана любая цена >= 15 000 € -> это ПРОДАЖА!
     2. Ключевые слова продажи: продам, продажа, продается, рассрочка, без ндс, vat, титул...
     """
     text_norm = normalize_prices_in_text(text)
@@ -89,7 +112,6 @@ def is_property_for_sale(text: str) -> bool:
 def extract_rental_price(text: str, max_price: int = MAX_STORE_PRICE) -> int | None:
     """
     Точное извлечение стоимости АРЕНДЫ (любой: квартир, вилл, домов) в евро.
-    Нормализует цены вроде €1,350 и €4,300 в 1350 и 4300!
     """
     text_norm = normalize_prices_in_text(text)
     text_lower = text_norm.lower()
@@ -156,48 +178,11 @@ def extract_sale_price(text: str) -> int:
     return max(prices) if prices else 0
 
 
-def extract_exchange_amount(text: str) -> int:
-    """
-    Извлечение сумм обмена валюты, включая диапазоны «от ... до ...» и записи «от 1,000 < ∞».
-    """
-    text_norm = normalize_prices_in_text(text)
-    patterns = [
-        r'(?:от|до|с|по|около|минимум|максимум|сумма|лимит|range)\s*(?:€|\$|eur|usd|usdt|руб|rub)?\s*#?(\d{2,8})',
-        r'#?(\d{2,8})\s*(?:usdt|eur|евро|€|\$|usd|руб|rub|btc|eth|k\b|к\b|тыс)',
-        r'(?:usdt|eur|евро|€|\$|usd|руб|rub)\s*#?(\d{2,8})',
-        r'\b(\d{3,8})\b'
-    ]
-    amounts = []
-    for pat in patterns:
-        matches = re.findall(pat, text_norm, re.IGNORECASE)
-        for grp in matches:
-            try:
-                val = int(grp)
-                if 50 <= val <= 50000000 and val not in (2023, 2024, 2025, 2026):
-                    amounts.append(val)
-            except ValueError:
-                pass
-    return max(amounts) if amounts else 0
-
-
-def is_currency_exchange(text: str, channel: str = "") -> bool:
-    text_lower = text.lower()
-    exchange_terms = [
-        "обмен", "меняю", "поменяю", "обменяю", "перестановка", "перестановки",
-        "курс", "usdt", "btc", "крипт", "рубл", "евро на руб", "рубли на евро",
-        "доллар", "наличност", "наличные", "наличк", "тинькофф", "сбер", "выдача", "exchange"
-    ]
-    hits = sum(1 for term in exchange_terms if term in text_lower)
-    if "cyexchange" in channel.lower() or "exchange" in channel.lower():
-        return len(text.strip()) > 3
-    return hits >= 2
-
-
 def is_sale_villa_paphos(text: str) -> bool:
     """
-    #Продам #Вилла #Пафос (включая пригороды Пафоса и объявления без чужих городов).
+    #Продам #Вилла #Пафос (строго Пафос и пригороды, без Лимасола, Ларнаки и других городов!).
     """
-    if is_seeking_housing(text) or is_other_city(text):
+    if is_seeking_housing(text) or not is_paphos_location(text):
         return False
 
     text_lower = text.lower()
@@ -212,11 +197,10 @@ def is_sale_villa_paphos(text: str) -> bool:
 
 def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, int | None]:
     """
-    #аренда #апартамента / #вилла #пафос #до €600.
-    Находит любую АРЕНДУ ВИЛЛ, ДОМОВ и АПАРТАМЕНТОВ в Пафосе до указанной цены!
+    #аренда #вилла / #квартира #пафос (строго Пафос и пригороды!).
     Если это продажа (is_property_for_sale == True), объявление 100% отсеивается!
     """
-    if is_property_for_sale(text) or is_seeking_housing(text) or is_other_city(text):
+    if is_property_for_sale(text) or is_seeking_housing(text) or not is_paphos_location(text):
         return False, None
 
     text_lower = text.lower()
@@ -238,13 +222,13 @@ def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, i
 
 
 def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_PRICE) -> list[tuple[str, int]]:
+    """
+    Классифицирует публикации строго на недвижимость в Пафосе:
+    1) rent_paphos (аренда в Пафосе)
+    2) sale_villa (продажа вилл в Пафосе)
+    Обмен валют и другие города полностью исключены.
+    """
     matched = []
-
-    if is_currency_exchange(text, channel):
-        amount = extract_exchange_amount(text)
-        matched.append(("currency_exchange", amount))
-        if "cyexchange" in channel.lower() or "exchange" in channel.lower():
-            return matched
 
     is_rent, rent_price = is_rent_paphos(text, max_price=max_price)
     if is_rent and rent_price is not None:
@@ -258,7 +242,4 @@ def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_P
 
 
 async def classify_post_smart(text: str, channel: str = "") -> list[tuple[str, int]]:
-    """
-    Использует быстрый, надежный точный классификатор (NLP) с корректным извлечением цен.
-    """
     return classify_post_nlp(text, channel, max_price=MAX_STORE_PRICE)

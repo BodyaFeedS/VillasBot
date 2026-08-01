@@ -67,21 +67,16 @@ async def fetch_channel_posts(session: aiohttp.ClientSession, channel: str, befo
 
 async def notify_users(bot: Bot, villa_data: dict, category: str, price: int):
     """
-    Рассылает новое объявление подписчикам в чат.
-    Для обмена валют (currency_exchange) и продажи вилл (sale_villa) рассылка отключена (сохраняем только в базу).
+    Рассылает новое объявление Пафоса подписчикам в чат.
     """
-    if category in ("currency_exchange", "sale_villa"):
-        return
-
     users = await db.get_all_users()
     title_map = {
         "sale_villa": "🏡 Продажа виллы (Пафос)",
-        "rent_paphos": "🏢 Аренда жилья (Пафос)",
-        "currency_exchange": "💱 Обмен валют"
+        "rent_paphos": "🏢 Аренда жилья (Пафос)"
     }
-    title = title_map.get(category, "Новое объявление")
-    price_str = f"{price:,} €".replace(",", " ") if category != "currency_exchange" else f"{price:,}".replace(",", " ")
-    price_label = "💰 Стоимость:" if category != "currency_exchange" else "💰 Сумма:"
+    title = title_map.get(category, "Новое объявление (Пафос)")
+    price_str = f"{price:,} €".replace(",", " ")
+    price_label = "💰 Стоимость:"
 
     raw_snippet = villa_data["text"][:350].strip()
     if len(villa_data["text"]) > 350:
@@ -93,10 +88,6 @@ async def notify_users(bot: Bot, villa_data: dict, category: str, price: int):
             if category == "rent_paphos":
                 user_limit = await db.get_user_max_price(user_id)
                 if price > user_limit:
-                    continue
-            elif category == "currency_exchange":
-                exchange_limit = await db.get_user_exchange_limit(user_id)
-                if price > exchange_limit:
                     continue
 
             msg_text = (
@@ -135,10 +126,7 @@ async def check_channels_once(bot: Bot, session: aiohttp.ClientSession):
                         category=cat
                     )
                     if is_new:
-                        if cat in ("currency_exchange", "sale_villa"):
-                            logging.info(f"💾 [PARSER] Новое объявление [{cat}] {price}€ сохранено в базу (без уведомления в чат).")
-                        else:
-                            await notify_users(bot, post, cat, price)
+                        await notify_users(bot, post, cat, price)
         except Exception as e:
             logging.error(f"Ошибка при проверке канала @{ch_clean}: {e}")
 

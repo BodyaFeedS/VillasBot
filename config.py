@@ -9,7 +9,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8835292843:AAGTbcKGHVB1H6Pe3dfyTJwJsSvkNOYN8kw").strip()
 
 # Очищаем список каналов от лишних символов (ссылок https://t.me/ или знака @)
-raw_channels_str = os.getenv("CHANNELS", "cyexchange, nedvizhka_Ciprus")
+raw_channels_str = os.getenv("CHANNELS", "nedvizhka_Ciprus")
 raw_channels = raw_channels_str.split(",")
 CHANNELS = []
 for ch in raw_channels:
@@ -22,7 +22,7 @@ for ch in raw_channels:
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))
 MAX_PRICE = int(os.getenv("MAX_PRICE", 600))
-DEFAULT_EXCHANGE_LIMIT = int(os.getenv("DEFAULT_EXCHANGE_LIMIT", 50000))
+DEFAULT_EXCHANGE_LIMIT = 50000
 
 # Ключи для реальных нейросетей (OpenAI или Google Gemini)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()

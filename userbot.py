@@ -97,16 +97,13 @@ async def handle_new_message(event):
             category=cat
         )
         if is_new:
-            if cat in ("currency_exchange", "sale_villa"):
-                logging.info(f"💾 [USERBOT] Новое объявление [{cat}] {price}€ сохранено в базу (без уведомления в чат).")
-            else:
-                logging.info(f"✅ [USERBOT] Новое объявление [{cat}] {price}€. Отправка подписчикам!")
-                villa_data = {
-                    "channel": channel_username,
-                    "text": text,
-                    "url": post_url
-                }
-                await notify_users(bot, villa_data, cat, price)
+            logging.info(f"✅ [USERBOT] Новое объявление Пафоса [{cat}] {price}€. Отправка подписчикам!")
+            villa_data = {
+                "channel": channel_username,
+                "text": text,
+                "url": post_url
+            }
+            await notify_users(bot, villa_data, cat, price)
 
 
 async def main():

@@ -7,6 +7,27 @@ import config
 DB_PATH = "villas.db"
 
 
+async def clean_non_paphos_and_exchange():
+    """
+    Удаляет из базы старые записи, которые не относятся к Пафосу или являются обменом валют.
+    Гарантирует, что при нажатии на кнопки «Аренда» и «Продажа» показывается ТОЛЬКО Пафос.
+    """
+    from ai_classifier import is_paphos_location
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM villas WHERE category = 'currency_exchange'")
+        async with db.execute("SELECT id, text FROM villas") as cursor:
+            rows = await cursor.fetchall()
+            ids_to_delete = []
+            for row_id, text in rows:
+                if not is_paphos_location(text):
+                    ids_to_delete.append(row_id)
+            for rid in ids_to_delete:
+                await db.execute("DELETE FROM villas WHERE id = ?", (rid,))
+                await db.execute("DELETE FROM favorites WHERE villa_id = ?", (rid,))
+        await db.commit()
+    logging.info(f"✅ [DATABASE] База очищена от чужих городов и валюты. Удалено старых не-Пафос записей: {len(ids_to_delete)}")
+
+
 async def init_db():
     """Инициализация таблиц базы данных SQLite (вечная история, пользователи и избранное)."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -45,7 +66,6 @@ async def init_db():
         except Exception:
             pass
 
-        # Таблица для закладок / избранного
         await db.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
                 user_id INTEGER NOT NULL,
@@ -57,6 +77,10 @@ async def init_db():
 
         await db.commit()
     logging.info("База данных SQLite успешно инициализирована.")
+    try:
+        await clean_non_paphos_and_exchange()
+    except Exception as e:
+        logging.warning(f"Ошибка очистки базы: {e}")
 
 
 async def add_user(user_id: int, max_price: int = config.MAX_PRICE, exchange_limit: int = config.DEFAULT_EXCHANGE_LIMIT):
@@ -73,40 +97,43 @@ async def add_user(user_id: int, max_price: int = config.MAX_PRICE, exchange_lim
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO users (user_id, max_price, exchange_limit, created_at) VALUES (?, ?, ?, ?)",
+            """
+            INSERT OR IGNORE INTO users (user_id, max_price, exchange_limit, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
             (user_id, max_price_val, ex_limit_val, datetime.now().isoformat())
         )
         await db.commit()
 
 
 async def get_user_max_price(user_id: int) -> int:
-    """Возвращает текущую установленную максимальную цену аренды для пользователя."""
+    """Возвращает максимальную цену аренды, установленную пользователем."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT max_price FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            if row and row[0] is not None:
+            if row and row[0]:
                 try:
                     return int(row[0])
                 except (ValueError, TypeError):
-                    return config.MAX_PRICE
+                    pass
             return config.MAX_PRICE
 
 
 async def get_user_exchange_limit(user_id: int) -> int:
-    """Возвращает текущий установленный лимит суммы для обмена валют/крипты."""
+    """Возвращает максимальную сумму/лимит обмена, установленный пользователем."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT exchange_limit FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            if row and row[0] is not None:
+            if row and row[0]:
                 try:
                     return int(row[0])
                 except (ValueError, TypeError):
-                    return config.DEFAULT_EXCHANGE_LIMIT
+                    pass
             return config.DEFAULT_EXCHANGE_LIMIT
 
 
 async def update_user_max_price(user_id: int, max_price: int):
-    """Обновляет персональный фильтр цены аренды для пользователя."""
+    """Обновляет максимальную цену аренды для конкретного пользователя."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -182,7 +209,6 @@ async def get_all_users() -> list[int]:
 async def is_duplicate_post(text: str, category: str) -> bool:
     """
     Проверяет, было ли уже сохранено объявление с таким же или аналогичным текстом в этой категории.
-    Предотвращает пересылку и дублирование повторяющихся сообщений!
     """
     norm_new = re.sub(r'\s+', ' ', text.strip().lower())[:120]
     if len(norm_new) < 15:
@@ -200,8 +226,13 @@ async def is_duplicate_post(text: str, category: str) -> bool:
 
 async def add_villa(channel: str, post_id: int, price: int, text: str, url: str, category: str = "rent_paphos") -> bool:
     """
-    Сохраняет пост в БД, если его ещё нет в базе для данной категории и если текст не является дубликатом.
+    Сохраняет пост в БД, если его ещё нет в базе для данной категории,
+    если текст не является дубликатом, и если он относится строго к Пафосу.
     """
+    from ai_classifier import is_paphos_location
+    if not is_paphos_location(text):
+        return False
+
     if await is_duplicate_post(text, category):
         return False
 
@@ -222,8 +253,10 @@ async def add_villa(channel: str, post_id: int, price: int, text: str, url: str,
 
 async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600, limit: int = 15) -> list[dict]:
     """
-    Возвращает сохраненные записи, отфильтрованные по категории и по максимальной цене / сумме обмена.
+    Возвращает сохраненные записи, отфильтрованные по категории и по максимальной цене,
+    гарантируя, что выдаются только объекты из Пафоса.
     """
+    from ai_classifier import is_paphos_location
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if category == "sale_villa":
@@ -234,16 +267,7 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600,
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (category, limit)
-        elif category == "currency_exchange":
-            query = """
-                SELECT id, channel, post_id, price, text, url, category, created_at
-                FROM villas
-                WHERE category = ? AND (price <= ? OR price = 0)
-                ORDER BY id DESC
-                LIMIT ?
-            """
-            params = (category, max_price, limit)
+            params = (category, limit * 4)
         else:
             query = """
                 SELECT id, channel, post_id, price, text, url, category, created_at
@@ -252,11 +276,13 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600,
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (category, max_price, limit)
+            params = (category, max_price, limit * 4)
 
         async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            villas = [dict(row) for row in rows]
+            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            return paphos_villas[:limit]
 
 
 async def add_favorite(user_id: int, villa_id: int) -> bool:
@@ -275,6 +301,7 @@ async def add_favorite(user_id: int, villa_id: int) -> bool:
 
 async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
     """Возвращает избранные объявления пользователя."""
+    from ai_classifier import is_paphos_location
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         query = """
@@ -285,17 +312,19 @@ async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
             ORDER BY v.id DESC
             LIMIT ?
         """
-        async with db.execute(query, (user_id, limit)) as cursor:
+        async with db.execute(query, (user_id, limit * 2)) as cursor:
             rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            villas = [dict(row) for row in rows]
+            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            return paphos_villas[:limit]
 
 
 async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> list[dict]:
     """
     Поиск по ключевым словам в тексте объявлений.
-    Если запрос не содержит слов 'продам'/'продажа'/'купить'/'sale', ищем только в аренде (rent_paphos) с фильтром price <= max_price!
-    Исключает попадание продажи недвижимости в результаты поиска аренды!
+    Гарантированно отбирает только недвижимость в Пафосе.
     """
+    from ai_classifier import is_paphos_location
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         query_lower = query.lower()
@@ -309,7 +338,7 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (f"%{query}%", limit)
+            params = (f"%{query}%", limit * 4)
         else:
             sql = """
                 SELECT id, channel, post_id, price, text, url, category, created_at
@@ -318,8 +347,10 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (f"%{query}%", max_price, limit)
+            params = (f"%{query}%", max_price, limit * 4)
 
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            villas = [dict(row) for row in rows]
+            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            return paphos_villas[:limit]

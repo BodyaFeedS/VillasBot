@@ -15,15 +15,11 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🏢 Аренда вилл и квартир")
             ],
             [
-                KeyboardButton(text="💱 Обмен валют"),
-                KeyboardButton(text="⭐ Мое Избранное")
-            ],
-            [
-                KeyboardButton(text="🔍 Поиск по словам"),
+                KeyboardButton(text="⭐ Мое Избранное"),
                 KeyboardButton(text="💰 Изменить цену аренды")
             ],
             [
-                KeyboardButton(text="💰 Изменить цену обмена"),
+                KeyboardButton(text="🔍 Поиск по словам"),
                 KeyboardButton(text="❓ Помощь")
             ]
         ],
@@ -37,15 +33,12 @@ async def cmd_start(message: Message):
     await db.add_user(user_id)
 
     user_limit = await db.get_user_max_price(user_id)
-    exchange_limit = await db.get_user_exchange_limit(user_id)
-    exchange_str = f"{exchange_limit:,}".replace(",", " ")
 
     text = (
-        "👋 <b>Каталог недвижимости и обмена валют (Пафос)</b>\n\n"
-        "Бот отслеживает новые публикации в профильных каналах и отбирает объявления по направлениям:\n\n"
-        "• <b>Продажа вилл</b> — дома и виллы в Пафосе\n"
-        f"• <b>Аренда вилл и квартир</b> — варианты в пределах <b>{user_limit} €</b>\n"
-        f"• <b>Обмен валют</b> — предложения с лимитом до <b>{exchange_str}</b>\n\n"
+        "👋 <b>Каталог недвижимости — Пафос и пригороды</b>\n\n"
+        "Бот отслеживает новые публикации в профильных каналах и строго отбирает объявления только по Пафосу:\n\n"
+        "• <b>🏡 Продажа вилл (Пафос)</b> — виллы, дома и коттеджи на продажу в Пафосе\n"
+        f"• <b>🏢 Аренда вилл и квартир</b> — варианты аренды в Пафосе до <b>{user_limit} €</b>\n\n"
         "<i>Выберите интересующий раздел в меню ниже или напишите любое слово в чат для поиска:</i>"
     )
 
