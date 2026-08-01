@@ -67,8 +67,12 @@ async def fetch_channel_posts(session: aiohttp.ClientSession, channel: str, befo
 
 async def notify_users(bot: Bot, villa_data: dict, category: str, price: int):
     """
-    Рассылает новое объявление всем подписчикам в естественном человеческом формате.
+    Рассылает новое объявление всем подписчикам в чат.
+    Для обмена валют (currency_exchange) рассылка отключена (сохраняем только в базу).
     """
+    if category == "currency_exchange":
+        return
+
     users = await db.get_all_users()
     title_map = {
         "sale_villa": "🏡 Продажа виллы (Пафос)",
@@ -131,7 +135,10 @@ async def check_channels_once(bot: Bot, session: aiohttp.ClientSession):
                         category=cat
                     )
                     if is_new:
-                        await notify_users(bot, post, cat, price)
+                        if cat == "currency_exchange":
+                            logging.info(f"💾 [PARSER] Новое объявление [currency_exchange] {price}€ сохранено в базу (без уведомления в чат).")
+                        else:
+                            await notify_users(bot, post, cat, price)
         except Exception as e:
             logging.error(f"Ошибка при проверке канала @{ch_clean}: {e}")
 
