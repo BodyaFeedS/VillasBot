@@ -9,23 +9,23 @@ DB_PATH = "villas.db"
 
 async def clean_non_paphos_and_exchange():
     """
-    Удаляет из базы старые записи, которые не относятся к Пафосу или являются обменом валют.
-    Гарантирует, что при нажатии на кнопки «Аренда» и «Продажа» показывается ТОЛЬКО Пафос.
+    Удаляет из базы старые записи, которые не относятся к Пафосу, являются обменом валют
+    или являются обычными квартирами/апартаментами (не виллами).
     """
-    from ai_classifier import is_paphos_location
+    from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM villas WHERE category = 'currency_exchange'")
         async with db.execute("SELECT id, text FROM villas") as cursor:
             rows = await cursor.fetchall()
             ids_to_delete = []
             for row_id, text in rows:
-                if not is_paphos_location(text):
+                if not is_paphos_location(text) or is_apartment_only(text):
                     ids_to_delete.append(row_id)
             for rid in ids_to_delete:
                 await db.execute("DELETE FROM villas WHERE id = ?", (rid,))
                 await db.execute("DELETE FROM favorites WHERE villa_id = ?", (rid,))
         await db.commit()
-    logging.info(f"✅ [DATABASE] База очищена от чужих городов и валюты. Удалено старых не-Пафос записей: {len(ids_to_delete)}")
+    logging.info(f"✅ [DATABASE] База очищена. Удалено записей чужих городов, валюты и квартир: {len(ids_to_delete)}")
 
 
 async def init_db():
@@ -227,10 +227,10 @@ async def is_duplicate_post(text: str, category: str) -> bool:
 async def add_villa(channel: str, post_id: int, price: int, text: str, url: str, category: str = "rent_paphos") -> bool:
     """
     Сохраняет пост в БД, если его ещё нет в базе для данной категории,
-    если текст не является дубликатом, и если он относится строго к Пафосу.
+    если текст не является дубликатом, если он относится к Пафосу и если это не квартира.
     """
-    from ai_classifier import is_paphos_location
-    if not is_paphos_location(text):
+    from ai_classifier import is_paphos_location, is_apartment_only
+    if not is_paphos_location(text) or is_apartment_only(text):
         return False
 
     if await is_duplicate_post(text, category):
@@ -254,9 +254,9 @@ async def add_villa(channel: str, post_id: int, price: int, text: str, url: str,
 async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600, limit: int = 15) -> list[dict]:
     """
     Возвращает сохраненные записи, отфильтрованные по категории и по максимальной цене,
-    гарантируя, что выдаются только объекты из Пафоса.
+    гарантируя, что выдаются только виллы/дома из Пафоса (без квартир).
     """
-    from ai_classifier import is_paphos_location
+    from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if category == "sale_villa":
@@ -281,7 +281,10 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600,
         async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             villas = [dict(row) for row in rows]
-            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            paphos_villas = [
+                v for v in villas
+                if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
+            ]
             return paphos_villas[:limit]
 
 
@@ -301,7 +304,7 @@ async def add_favorite(user_id: int, villa_id: int) -> bool:
 
 async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
     """Возвращает избранные объявления пользователя."""
-    from ai_classifier import is_paphos_location
+    from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         query = """
@@ -315,16 +318,19 @@ async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
         async with db.execute(query, (user_id, limit * 2)) as cursor:
             rows = await cursor.fetchall()
             villas = [dict(row) for row in rows]
-            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            paphos_villas = [
+                v for v in villas
+                if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
+            ]
             return paphos_villas[:limit]
 
 
 async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> list[dict]:
     """
     Поиск по ключевым словам в тексте объявлений.
-    Гарантированно отбирает только недвижимость в Пафосе.
+    Гарантированно отбирает только виллы/дома в Пафосе (без квартир).
     """
-    from ai_classifier import is_paphos_location
+    from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         query_lower = query.lower()
@@ -352,5 +358,8 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
             villas = [dict(row) for row in rows]
-            paphos_villas = [v for v in villas if is_paphos_location(v.get("text", ""))]
+            paphos_villas = [
+                v for v in villas
+                if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
+            ]
             return paphos_villas[:limit]

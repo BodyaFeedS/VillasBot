@@ -81,6 +81,26 @@ def is_seeking_housing(text: str) -> bool:
     return any(term in text_lower for term in seek_terms)
 
 
+def is_apartment_only(text: str) -> bool:
+    """
+    Отсеивает объявления, где сдаются/продаются исключительно квартиры, апартаменты или студии
+    (без упоминания вилл, домов, коттеджей или таунхаусов).
+    """
+    text_lower = text.lower()
+    flat_words = [
+        "квартир", "апартамент", "студи", "flat", "apartment", "studio",
+        "#квартира", "#апартаменты", "#студия",
+        "1-комн", "2-комн", "3-комн", "однокомнат", "двухкомнат", "трехкомнат"
+    ]
+    villa_words = [
+        "вилл", "дом", "коттедж", "особняк", "villa", "house",
+        "таунхаус", "townhouse", "бунгало", "мезонет", "#вилла", "#дом"
+    ]
+    has_flat = any(fw in text_lower for fw in flat_words)
+    has_villa = any(vw in text_lower for vw in villa_words)
+    return has_flat and not has_villa
+
+
 def is_property_for_sale(text: str) -> bool:
     """
     100% гарантированная проверка, что объявление о ПРОДАЖЕ недвижимости (а не аренда!):
@@ -111,7 +131,7 @@ def is_property_for_sale(text: str) -> bool:
 
 def extract_rental_price(text: str, max_price: int = MAX_STORE_PRICE) -> int | None:
     """
-    Точное извлечение стоимости АРЕНДЫ (любой: квартир, вилл, домов) в евро.
+    Точное извлечение стоимости АРЕНДЫ вилл и домов в евро.
     """
     text_norm = normalize_prices_in_text(text)
     text_lower = text_norm.lower()
@@ -180,9 +200,9 @@ def extract_sale_price(text: str) -> int:
 
 def is_sale_villa_paphos(text: str) -> bool:
     """
-    #Продам #Вилла #Пафос (строго Пафос и пригороды, без Лимасола, Ларнаки и других городов!).
+    #Продам #Вилла #Пафос (строго Пафос и пригороды, без Лимасола, Ларнаки и без обычных квартир!).
     """
-    if is_seeking_housing(text) or not is_paphos_location(text):
+    if is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
         return False
 
     text_lower = text.lower()
@@ -197,10 +217,10 @@ def is_sale_villa_paphos(text: str) -> bool:
 
 def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, int | None]:
     """
-    #аренда #вилла / #квартира #пафос (строго Пафос и пригороды!).
-    Если это продажа (is_property_for_sale == True), объявление 100% отсеивается!
+    #аренда #вилла #пафос (строго аренда ВИЛЛ и ДОМОВ в Пафосе, БЕЗ КВАРТИР!).
+    Если это продажа (is_property_for_sale == True) или квартира (is_apartment_only == True), объявление отсеивается!
     """
-    if is_property_for_sale(text) or is_seeking_housing(text) or not is_paphos_location(text):
+    if is_property_for_sale(text) or is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
         return False, None
 
     text_lower = text.lower()
@@ -209,8 +229,7 @@ def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, i
         "аренд", "сдам", "сдаем", "сдаём", "сдается", "сдаётся", "сдаю", "сдать",
         "rent", "for rent", "letting", "долгосрок", "посуточно", "за ночь", "в сутки", "за сутки",
         "на сутки", "/ночь", "/сутки", "per night", "на месяц", "#аренда",
-        "вилл", "дом", "коттедж", "особняк", "villa", "house", "таунхаус", "townhouse",
-        "апартамент", "квартир", "студи"
+        "вилл", "дом", "коттедж", "особняк", "villa", "house", "таунхаус", "townhouse", "бунгало"
     ]
     has_rent = any(kw in text_lower for kw in rent_keywords)
     price = extract_rental_price(text, max_price=max_price)
@@ -223,10 +242,9 @@ def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, i
 
 def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_PRICE) -> list[tuple[str, int]]:
     """
-    Классифицирует публикации строго на недвижимость в Пафосе:
-    1) rent_paphos (аренда в Пафосе)
-    2) sale_villa (продажа вилл в Пафосе)
-    Обмен валют и другие города полностью исключены.
+    Классифицирует публикации строго на ВИЛЛЫ и ДОМА в Пафосе (без квартир!):
+    1) rent_paphos (аренда вилл и домов в Пафосе)
+    2) sale_villa (продажа вилл и домов в Пафосе)
     """
     matched = []
 
