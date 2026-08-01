@@ -97,8 +97,8 @@ async def handle_new_message(event):
             category=cat
         )
         if is_new:
-            if cat == "currency_exchange":
-                logging.info(f"💾 [USERBOT] Новое объявление [currency_exchange] {price}€ сохранено в базу (без уведомления в чат).")
+            if cat in ("currency_exchange", "sale_villa"):
+                logging.info(f"💾 [USERBOT] Новое объявление [{cat}] {price}€ сохранено в базу (без уведомления в чат).")
             else:
                 logging.info(f"✅ [USERBOT] Новое объявление [{cat}] {price}€. Отправка подписчикам!")
                 villa_data = {

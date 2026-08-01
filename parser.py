@@ -67,10 +67,10 @@ async def fetch_channel_posts(session: aiohttp.ClientSession, channel: str, befo
 
 async def notify_users(bot: Bot, villa_data: dict, category: str, price: int):
     """
-    Рассылает новое объявление всем подписчикам в чат.
-    Для обмена валют (currency_exchange) рассылка отключена (сохраняем только в базу).
+    Рассылает новое объявление подписчикам в чат.
+    Для обмена валют (currency_exchange) и продажи вилл (sale_villa) рассылка отключена (сохраняем только в базу).
     """
-    if category == "currency_exchange":
+    if category in ("currency_exchange", "sale_villa"):
         return
 
     users = await db.get_all_users()
@@ -135,8 +135,8 @@ async def check_channels_once(bot: Bot, session: aiohttp.ClientSession):
                         category=cat
                     )
                     if is_new:
-                        if cat == "currency_exchange":
-                            logging.info(f"💾 [PARSER] Новое объявление [currency_exchange] {price}€ сохранено в базу (без уведомления в чат).")
+                        if cat in ("currency_exchange", "sale_villa"):
+                            logging.info(f"💾 [PARSER] Новое объявление [{cat}] {price}€ сохранено в базу (без уведомления в чат).")
                         else:
                             await notify_users(bot, post, cat, price)
         except Exception as e:
