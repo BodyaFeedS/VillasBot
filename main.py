@@ -24,23 +24,44 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - 
 
 async def run_dummy_http_server():
     """
-    Легковесный HTTP-сервер для Render.com (Web Service),
-    чтобы сервис успешно проходил проверку порта ($PORT) и работал бесплатно 24/7!
+    HTTP-сервер для Render.com (Web Service) и Telegram Mini App!
+    Обслуживает API предложений из базы данных и статические файлы мини-приложения из папки webapp/.
     """
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
 
     async def handle_ping(request):
-        return web.Response(text="✅ Villas Bot & Userbot are running 24/7!", status=200)
+        return web.Response(text="✅ Villas Bot & Mini App are running 24/7!", status=200)
 
-    app.router.add_get("/", handle_ping)
+    async def handle_api_villas(request):
+        category = request.query.get("category", "rent_paphos")
+        try:
+            limit = int(request.query.get("limit", 50))
+        except ValueError:
+            limit = 50
+        try:
+            max_price = int(request.query.get("max_price", 100000000))
+        except ValueError:
+            max_price = 100000000
+        villas_list = await db.get_latest_villas(category=category, max_price=max_price, limit=limit)
+        return web.json_response(villas_list)
+
+    async def handle_root(request):
+        raise web.HTTPFound("/webapp/index.html")
+
+    app.router.add_get("/", handle_root)
     app.router.add_get("/health", handle_ping)
+    app.router.add_get("/api/villas", handle_api_villas)
+
+    webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
+    if os.path.exists(webapp_dir):
+        app.router.add_static("/webapp", webapp_dir)
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"🌐 [HTTP] Веб-сервер для Render.com успешно запущен на порту {port} (0.0.0.0:{port})")
+    logging.info(f"🌐 [HTTP] Веб-сервер и Telegram Mini App запущены на порту {port} (/webapp/index.html)")
 
 
 async def scan_history_on_startup(client: TelegramClient):
@@ -48,73 +69,48 @@ async def scan_history_on_startup(client: TelegramClient):
     Сканирует последние 2000 старых сообщений из каждого чата при запуске.
     """
     logging.info("⏳ [USERBOT] Полная проверка старых сообщений (до 2000 постов из каждого канала)...")
-    for ch in config.CHANNELS:
-        ch_clean = ch.strip()
-        if not ch_clean:
-            continue
+    for channel_name in config.CHANNELS:
         try:
-            entity = await client.get_entity(ch_clean)
-            title = getattr(entity, "title", ch_clean)
-            logging.info(f"📂 Анализ истории из @{ch_clean} ({title})...")
-            count_new = 0
-            async for message in client.iter_messages(entity, limit=2000):
-                text = message.message or ""
-                if not text:
+            logging.info(f" -> Чтение @{channel_name}...")
+            count = 0
+            async for message in client.iter_messages(channel_name, limit=2000):
+                if not message.text:
                     continue
-                post_id = message.id
-                post_url = f"https://t.me/{ch_clean}/{post_id}"
-                matches = await classify_post(text, channel=ch_clean)
-                for cat, price in matches:
-                    is_new = await db.add_villa(
-                        channel=ch_clean,
-                        post_id=post_id,
-                        price=price,
-                        text=text,
-                        url=post_url,
-                        category=cat
-                    )
-                    if is_new:
-                        count_new += 1
-                        logging.info(f"   [+] Сохранено старое объявление: {cat} (цена: {price}) из @{ch_clean}")
-            logging.info(f"✅ В чате @{ch_clean} найдено и сохранено из истории: {count_new} объявлений.")
+                count += 1
+                results = await classify_post(message.text, channel_name)
+                for cat, price in results:
+                    post_id = message.id
+                    post_url = f"https://t.me/{channel_name}/{post_id}"
+                    await db.add_villa(channel_name, post_id, price, message.text, post_url, cat)
+            logging.info(f"    Готово! Обработано сообщений: {count} из @{channel_name}")
         except Exception as e:
-            logging.warning(f"⚠️ Не удалось получить историю для @{ch_clean}: {e}")
+            logging.error(f"❌ Ошибка сканирования @{channel_name}: {e}")
 
 
 async def run_userbot(bot: Bot):
     """
-    Запуск Telethon-клиента для мониторинга любых чатов и каналов Telegram от вашего аккаунта.
+    Запуск Telethon Юзербота. Читает сообщения как обычный Telegram-аккаунт.
     """
-    API_ID = os.getenv("API_ID", "35554083")
-    API_HASH = os.getenv("API_HASH", "f3308dd71c039f71e565eabe1938e8f8")
-    if not API_ID or not API_HASH:
+    api_id = os.getenv("API_ID")
+    api_hash = os.getenv("API_HASH")
+
+    if not api_id or not api_hash:
         logging.error("⚠️ API_ID или API_HASH не указаны в файле .env! Юзербот отключен.")
         return
 
-    client = TelegramClient("userbot_session", int(API_ID), API_HASH)
+    client = TelegramClient("userbot_session", int(api_id), api_hash)
 
     @client.on(events.NewMessage(chats=config.CHANNELS))
-    async def handle_new_message(event):
-        text = event.message.message or ""
-        if not text:
-            return
+    async def handler(event):
+        channel_username = event.chat.username or str(event.chat_id)
+        text = event.text or ""
 
-        chat = await event.get_chat()
-        channel_username = getattr(chat, "username", None) or str(chat.id)
-        post_id = event.message.id
-        post_url = f"https://t.me/{channel_username}/{post_id}" if getattr(chat, "username", None) else ""
+        logging.info(f"⚡ [USERBOT] Новая публикация в @{channel_username} (id: {event.id}). Анализ...")
+        results = await classify_post(text, channel_username)
 
-        logging.info(f"[USERBOT] Новая публикация в @{channel_username} (id: {post_id}). Анализ...")
-        matches = await classify_post(text, channel=channel_username)
-        for cat, price in matches:
-            is_new = await db.add_villa(
-                channel=channel_username,
-                post_id=post_id,
-                price=price,
-                text=text,
-                url=post_url,
-                category=cat
-            )
+        for cat, price in results:
+            post_url = f"https://t.me/{channel_username}/{event.id}"
+            is_new = await db.add_villa(channel_username, event.id, price, text, post_url, cat)
             if is_new:
                 logging.info(f"✅ [USERBOT] Новое объявление [{cat}] {price}€. Отправка подписчикам!")
                 villa_data = {
@@ -146,11 +142,10 @@ async def run_bot(bot: Bot):
 async def main():
     await db.init_db()
     logging.info("=====================================================")
-    logging.info("🚀 Запуск единого сервера: Telegram-Бот + Юзербот")
+    logging.info("🚀 Запуск единого сервера: Telegram-Бот + Юзербот + Mini App")
     logging.info("=====================================================")
     bot = Bot(token=config.BOT_TOKEN)
 
-    # Запускаем одновременно: Telegram-бота, Юзербота и веб-сервер для проверки Render.com
     await asyncio.gather(
         run_bot(bot),
         run_userbot(bot),

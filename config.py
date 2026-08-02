@@ -24,6 +24,9 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))
 MAX_PRICE = int(os.getenv("MAX_PRICE", 600))
 DEFAULT_EXCHANGE_LIMIT = 50000
 
+# URL для Telegram Mini App (например: https://ваше-имя-на-render.com/webapp/index.html)
+WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip()
+
 # Ключи для реальных нейросетей (OpenAI или Google Gemini)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LAYIDCIHIqdEBoKmJeS6hD9VHBvxLoFcH3HrUNhPJB5w").strip()

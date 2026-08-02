@@ -251,9 +251,9 @@ async def add_villa(channel: str, post_id: int, price: int, text: str, url: str,
             return False
 
 
-async def get_latest_villas(category: str = "rent_paphos", max_price: int = 600, limit: int = 15) -> list[dict]:
+async def get_latest_villas(category: str = "rent_paphos", max_price: int = 50000, limit: int = 15) -> list[dict]:
     """
-    Возвращает сохраненные записи, отфильтрованные по категории и по максимальной цене,
+    Возвращает сохраненные записи, отфильтрованные по категории,
     гарантируя, что выдаются только виллы/дома из Пафоса (без квартир).
     """
     from ai_classifier import is_paphos_location, is_apartment_only
@@ -327,39 +327,77 @@ async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
 
 async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> list[dict]:
     """
-    Поиск по ключевым словам в тексте объявлений.
-    Гарантированно отбирает только виллы/дома в Пафосе (без квартир).
+    Умный поиск по ключевым словам или ценам в текстах объявлений Пафоса.
+    1. Если введено число (например '3000' или '5000'), возвращает аренду вилл с ценой <= этому числу.
+    2. Если введены общие слова ('аренда вилла пафос', 'продам'), возвращает все свежие записи этой категории.
+    3. Иначе проверяет вхождение каждого поискового слова в текст объявления.
     """
     from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        query_lower = query.lower()
-        is_sale_query = any(kw in query_lower for kw in ("продам", "продаж", "купить", "sale", "прода"))
+        query_clean = query.strip()
+        query_lower = query_clean.lower()
 
-        if is_sale_query:
+        # 1. Если пользователь ввел число (например "3000" или "5000") — ищем все виллы в аренду с ценой <= числу
+        if query_clean.isdigit():
+            num_val = int(query_clean)
             sql = """
                 SELECT id, channel, post_id, price, text, url, category, created_at
                 FROM villas
-                WHERE text LIKE ? AND category = 'sale_villa'
+                WHERE category = 'rent_paphos' AND price <= ?
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (f"%{query}%", limit * 4)
+            async with db.execute(sql, (num_val, limit * 4)) as cursor:
+                rows = await cursor.fetchall()
+                villas = [dict(row) for row in rows]
+                paphos_villas = [
+                    v for v in villas
+                    if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
+                ]
+                return paphos_villas[:limit]
+
+        # 2. Определяем категорию (продажа или аренда)
+        is_sale_query = any(kw in query_lower for kw in ("продам", "продаж", "купить", "sale", "прода", "покупк"))
+        target_cat = "sale_villa" if is_sale_query else "rent_paphos"
+
+        if target_cat == "sale_villa":
+            sql = "SELECT id, channel, post_id, price, text, url, category, created_at FROM villas WHERE category = 'sale_villa' ORDER BY id DESC LIMIT ?"
+            params = (limit * 6,)
         else:
-            sql = """
-                SELECT id, channel, post_id, price, text, url, category, created_at
-                FROM villas
-                WHERE text LIKE ? AND category = 'rent_paphos' AND price <= ?
-                ORDER BY id DESC
-                LIMIT ?
-            """
-            params = (f"%{query}%", max_price, limit * 4)
+            sql = "SELECT id, channel, post_id, price, text, url, category, created_at FROM villas WHERE category = 'rent_paphos' AND price <= ? ORDER BY id DESC LIMIT ?"
+            params = (max_price, limit * 6)
 
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
             villas = [dict(row) for row in rows]
-            paphos_villas = [
-                v for v in villas
-                if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
-            ]
-            return paphos_villas[:limit]
+
+        # Фильтруем только Пафос и без квартир
+        villas = [
+            v for v in villas
+            if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
+        ]
+
+        # 3. Проверяем слова поискового запроса
+        generic_words = {
+            "аренда", "аренды", "аренду", "арендовать", "сдам", "сдаю", "сдается", "сдаётся", "rent",
+            "продам", "продажа", "продаже", "продаю", "купить", "sale",
+            "вилла", "виллы", "виллу", "вилл", "дом", "дома", "коттедж", "villa", "house",
+            "пафос", "пафосе", "paphos", "pafos"
+        }
+
+        words = [w for w in re.findall(r'\w+', query_lower) if len(w) >= 2]
+        specific_words = [w for w in words if w not in generic_words]
+
+        if not specific_words:
+            # Запрос содержал только общие слова категории и локации (например "Аренда вилла Пафос")
+            return villas[:limit]
+
+        # Иначе каждое специфичное слово должно быть в тексте
+        matched_villas = []
+        for v in villas:
+            text_lower = (v.get("text") or "").lower()
+            if all(sw in text_lower for sw in specific_words):
+                matched_villas.append(v)
+
+        return matched_villas[:limit]

@@ -14,10 +14,6 @@ from datetime import datetime
 router = Router()
 
 
-class PriceState(StatesGroup):
-    waiting_for_price = State()
-
-
 class SearchState(StatesGroup):
     waiting_for_keyword = State()
 
@@ -88,8 +84,11 @@ async def show_favorites(message: Message):
 @router.message(F.text == "🔍 Поиск по словам")
 async def ask_search_keyword(message: Message, state: FSMContext):
     await message.answer(
-        "🔍 <b>Поиск по ключевым словам (Пафос)</b>\n\n"
-        "Введите любое слово или фразу для поиска по виллам Пафоса (например: <code>вилла</code>, <code>аренда виллы</code>, <code>бассейн</code>, <code>титул</code>, <code>4 спальни</code>):",
+        "🔍 <b>Поиск по ключевым словам и ценам (Пафос)</b>\n\n"
+        "Вы можете ввести:\n"
+        "• Любую цену в евро (например: <code>3000</code> или <code>5000</code>) — бот покажет все виллы в аренду до этой суммы!\n"
+        "• Район или особенности (например: <code>Тала</code>, <code>Корал Бэй</code>, <code>бассейн</code>, <code>4 спальни</code>).\n\n"
+        "Напишите ваш запрос ниже:",
         parse_mode="HTML"
     )
     await state.set_state(SearchState.waiting_for_keyword)
@@ -98,26 +97,25 @@ async def ask_search_keyword(message: Message, state: FSMContext):
 @router.message(SearchState.waiting_for_keyword)
 async def process_search_keyword(message: Message, state: FSMContext):
     query = (message.text or "").strip()
-    if not query or len(query) < 2:
-        await message.answer("Пожалуйста, введите минимум 2 символа для поиска:")
+    if not query:
+        await message.answer("Пожалуйста, введите запрос для поиска:")
         return
 
     await state.clear()
-    user_max = await db.get_user_max_price(message.from_user.id)
-    villas = await db.search_villas(query, max_price=user_max, limit=30)
+    villas = await db.search_villas(query, max_price=50000, limit=30)
     villas = [
         v for v in villas
         if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
     ][:15]
     if not villas:
         await message.answer(
-            f"❌ По запросу <b>«{html.escape(query)}»</b> (с ценой аренды до <b>{user_max} €</b>) в Пафосе ничего не найдено.\n"
-            "Попробуйте другое слово или увеличьте лимит в меню <b>«💰 Изменить цену аренды»</b>.",
+            f"❌ По запросу <b>«{html.escape(query)}»</b> в Пафосе ничего не найдено.\n"
+            "Попробуйте другое слово или район.",
             parse_mode="HTML"
         )
         return
 
-    await message.answer(f"🔍 <b>Результаты поиска по запросу «{html.escape(query)}» (Пафос, цена до {user_max} €):</b>", parse_mode="HTML")
+    await message.answer(f"🔍 <b>Результаты поиска по запросу «{html.escape(query)}» (Пафос):</b>", parse_mode="HTML")
     for v in villas:
         text, kb = format_villa_card_with_kb(v, v.get("category", ""))
         await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
@@ -145,58 +143,26 @@ async def show_villas_sale(message: Message):
         await message.answer(card, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
 
 
-@router.message(F.text.in_({"🏢 Аренда вилл (Пафос)", "🏢 Аренда вилл", "🏢 Аренда вилл и квартир", "🏢 Аренда до указанной цены"}))
+@router.message(F.text.in_({"🏢 Аренда вилл Пафос", "Аренда вилл Пафос", "🏢 Аренда вилл (Пафос)", "🏢 Аренда вилл", "🏢 Аренда вилл и квартир", "🏢 Аренда до указанной цены"}))
 async def show_villas_rent(message: Message):
-    user_max = await db.get_user_max_price(message.from_user.id)
-    villas = await db.get_latest_villas(category="rent_paphos", max_price=user_max, limit=30)
+    villas = await db.get_latest_villas(category="rent_paphos", max_price=50000, limit=30)
     villas = [
         v for v in villas
         if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
     ][:15]
     if not villas:
         await message.answer(
-            f"Сейчас нет объявлений по аренде вилл и домов в Пафосе в пределах <b>{user_max} €</b>.\n"
+            "Сейчас нет актуальных объявлений по аренде вилл и домов в Пафосе.\n"
             "Мы уведомим вас сразу же после появления подходящих вариантов.",
             parse_mode="HTML"
         )
         return
 
     cards_kb = [format_villa_card_with_kb(v, "rent_paphos") for v in villas]
-    header = f"🏢 <b>Аренда вилл в Пафосе</b> (бюджет до {user_max} €)\n<i>Свежие варианты:</i>"
+    header = "🏢 <b>Аренда вилл в Пафосе</b>\n<i>Свежие варианты:</i>"
     await message.answer(header, parse_mode="HTML")
     for card, kb in cards_kb:
         await message.answer(card, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@router.message(F.text == "💰 Изменить цену аренды")
-async def ask_rent_price_limit(message: Message, state: FSMContext):
-    current = await db.get_user_max_price(message.from_user.id)
-    await message.answer(
-        f"Ваш текущий лимит по аренде: <b>{current} €</b>.\n\n"
-        "Укажите новую максимальную стоимость в евро (целым числом):",
-        parse_mode="HTML"
-    )
-    await state.set_state(PriceState.waiting_for_price)
-
-
-@router.message(PriceState.waiting_for_price)
-async def process_rent_price_limit(message: Message, state: FSMContext):
-    if not message.text or not message.text.isdigit():
-        await message.answer("Пожалуйста, введите корректное число в евро (например: 600 или 1000):")
-        return
-
-    new_price = int(message.text)
-    if new_price < 100 or new_price > 50000:
-        await message.answer("Сумма должна быть в диапазоне от 100 до 50 000 €. Попробуйте ещё раз:")
-        return
-
-    await db.update_user_max_price(message.from_user.id, new_price)
-    await state.clear()
-    await message.answer(
-        f"Лимит для аренды вилл успешно обновлён: <b>{new_price} €</b>.\n"
-        "Теперь будут показываться варианты аренды вилл в пределах этой суммы.",
-        parse_mode="HTML"
-    )
 
 
 @router.message(F.text == "❓ Помощь")
@@ -205,10 +171,10 @@ async def show_help(message: Message):
         "<b>Справочная информация</b>\n\n"
         "Бот автоматически отслеживает новые публикации в профильных каналах Кипра и строго отбирает виллы и дома в Пафосе (без квартир):\n\n"
         "• <b>🏡 Продажа вилл (Пафос)</b> — виллы и дома на продажу в Пафосе\n"
-        "• <b>🏢 Аренда вилл (Пафос)</b> — аренда вилл и домов в пределах вашего бюджета в Пафосе\n"
+        "• <b>🏢 Аренда вилл Пафос</b> — свежие объявления аренды вилл и домов в Пафосе\n"
         "• <b>⭐ Мое Избранное</b> — просмотр сохраненных объявлений\n"
-        "• <b>🔍 Поиск по словам</b> — поиск по ключевым словам в базе\n\n"
-        "<i>Также вы можете в любой момент написать слово или фразу в чат, чтобы быстро найти нужное объявление!</i>"
+        "• <b>🔍 Поиск по словам</b> — поиск по ключевым словам или максимальной цене\n\n"
+        "<i>Также вы можете в любой момент написать в чат любое число (например: <b>3000</b> или <b>5000</b>) или слово, чтобы быстро найти подходящие варианты!</i>"
     )
     await message.answer(help_text, parse_mode="HTML")
 
@@ -216,28 +182,33 @@ async def show_help(message: Message):
 @router.message(F.text)
 async def global_text_search(message: Message):
     """
-    Глобальный обработчик: если пользователь просто написал слово в чат (например 'вилла', 'аренда', 'бассейн'),
-    автоматически ищем по базе объявлений с учетом фильтра по максимальной цене аренды!
+    Глобальный обработчик:
+    1. Если пользователь написал число (например '3000' или '5000'), показываем аренду вилл с ценой до этого лимита!
+    2. Если пользователь написал слова (например 'Аренда вилла Пафос', 'Тала', 'бассейн'), выполняем умный поиск!
     """
     query = (message.text or "").strip()
-    if len(query) < 2:
+    if not query:
         return
 
-    user_max = await db.get_user_max_price(message.from_user.id)
-    villas = await db.search_villas(query, max_price=user_max, limit=30)
+    villas = await db.search_villas(query, max_price=50000, limit=30)
     villas = [
         v for v in villas
         if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
     ][:15]
     if not villas:
         await message.answer(
-            f"❌ По запросу <b>«{html.escape(query)}»</b> (с ценой аренды до <b>{user_max} €</b>) в Пафосе ничего не найдено.\n"
-            "Попробуйте другое слово или увеличьте лимит в меню <b>«💰 Изменить цену аренды»</b>.",
+            f"❌ По запросу <b>«{html.escape(query)}»</b> в Пафосе ничего не найдено.\n"
+            "Попробуйте другое слово или укажите другую сумму.",
             parse_mode="HTML"
         )
         return
 
-    await message.answer(f"🔍 <b>Результаты поиска по слову «{html.escape(query)}» (Пафос, цена до {user_max} €):</b>", parse_mode="HTML")
+    if query.isdigit():
+        header_text = f"🔍 <b>Аренда вилл в Пафосе с бюджетом до {int(query):,} €:</b>".replace(",", " ")
+    else:
+        header_text = f"🔍 <b>Результаты поиска по запросу «{html.escape(query)}» (Пафос):</b>"
+
+    await message.answer(header_text, parse_mode="HTML")
     for v in villas:
         text, kb = format_villa_card_with_kb(v, v.get("category", ""))
         await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
