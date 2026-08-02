@@ -66,6 +66,36 @@ async def scan_history_on_startup(client: TelegramClient):
             logging.error(f"❌ Ошибка сканирования @{channel_name}: {e}")
 
 
+async def periodic_channel_check(client: TelegramClient, bot: Bot):
+    """
+    Фоновая проверка каждые 15 минут: сканирует последние 30 постов в каналах,
+    чтобы 100% гарантировать, что ни одна публикация виллы не была пропущена.
+    """
+    while True:
+        await asyncio.sleep(900)  # 15 минут
+        logging.info("🔄 [USERBOT] Периодическая проверка новых сообщений в каналах...")
+        for channel_name in config.CHANNELS:
+            try:
+                async for message in client.iter_messages(channel_name, limit=30):
+                    if not message.text:
+                        continue
+                    results = await classify_post(message.text, channel_name)
+                    for cat, price in results:
+                        post_id = message.id
+                        post_url = f"https://t.me/{channel_name}/{post_id}"
+                        is_new = await db.add_villa(channel_name, post_id, price, message.text, post_url, cat)
+                        if is_new:
+                            logging.info(f"✅ [USERBOT] Новая вилла найдена при фоновой проверке [{cat}] {price}€! Отправка...")
+                            villa_data = {
+                                "channel": channel_name,
+                                "text": message.text,
+                                "url": post_url
+                            }
+                            await notify_users(bot, villa_data, cat, price)
+            except Exception as e:
+                logging.error(f"❌ Ошибка фоновой проверки @{channel_name}: {e}")
+
+
 async def run_userbot(bot: Bot):
     """
     Запуск Telethon Юзербота. Читает сообщения как обычный Telegram-аккаунт.
@@ -102,7 +132,8 @@ async def run_userbot(bot: Bot):
     await client.start()
     logging.info("✅ [USERBOT] Успешно подключен! Мониторим каналы: " + ", ".join(config.CHANNELS))
     await scan_history_on_startup(client)
-    logging.info("🎧 [USERBOT] Мониторинг в реальном времени активен!")
+    asyncio.create_task(periodic_channel_check(client, bot))
+    logging.info("🎧 [USERBOT] Мониторинг в реальном времени и фоновые проверки каждые 15 минут активны!")
     await client.run_until_disconnected()
 
 

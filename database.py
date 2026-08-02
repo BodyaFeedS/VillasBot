@@ -7,6 +7,25 @@ import config
 DB_PATH = "villas.db"
 
 
+def deduplicate_villas(villas: list[dict]) -> list[dict]:
+    """
+    Удаляет дубликаты и повторно опубликованные объявления из списка выдачи.
+    Сравнивает по цене и первым 12 значимым словам текста.
+    """
+    seen_signatures = set()
+    unique_villas = []
+    for v in villas:
+        text = v.get("text", "")
+        words = re.findall(r'[а-яa-z0-9]+', text.lower())
+        sig_words = " ".join(words[:12])
+        price = v.get("price", 0)
+        sig = (price, sig_words)
+        if sig not in seen_signatures and len(sig_words) > 0:
+            seen_signatures.add(sig)
+            unique_villas.append(v)
+    return unique_villas
+
+
 async def clean_non_paphos_and_exchange():
     """
     Удаляет из базы старые записи, которые не относятся к Пафосу, являются обменом валют
@@ -254,7 +273,7 @@ async def add_villa(channel: str, post_id: int, price: int, text: str, url: str,
 async def get_latest_villas(category: str = "rent_paphos", max_price: int = 50000, limit: int = 15) -> list[dict]:
     """
     Возвращает сохраненные записи, отфильтрованные по категории,
-    гарантируя, что выдаются только виллы/дома из Пафоса (без квартир).
+    гарантируя, что выдаются только виллы/дома из Пафоса (без квартир и без повторов).
     """
     from ai_classifier import is_paphos_location, is_apartment_only
     async with aiosqlite.connect(DB_PATH) as db:
@@ -267,7 +286,7 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 5000
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (category, limit * 4)
+            params = (category, limit * 6)
         else:
             query = """
                 SELECT id, channel, post_id, price, text, url, category, created_at
@@ -276,7 +295,7 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 5000
                 ORDER BY id DESC
                 LIMIT ?
             """
-            params = (category, max_price, limit * 4)
+            params = (category, max_price, limit * 6)
 
         async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
@@ -285,7 +304,8 @@ async def get_latest_villas(category: str = "rent_paphos", max_price: int = 5000
                 v for v in villas
                 if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
             ]
-            return paphos_villas[:limit]
+            unique_villas = deduplicate_villas(paphos_villas)
+            return unique_villas[:limit]
 
 
 async def add_favorite(user_id: int, villa_id: int) -> bool:
@@ -322,7 +342,7 @@ async def get_user_favorites(user_id: int, limit: int = 30) -> list[dict]:
                 v for v in villas
                 if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
             ]
-            return paphos_villas[:limit]
+            return deduplicate_villas(paphos_villas)[:limit]
 
 
 async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> list[dict]:
@@ -348,14 +368,14 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
                 ORDER BY id DESC
                 LIMIT ?
             """
-            async with db.execute(sql, (num_val, limit * 4)) as cursor:
+            async with db.execute(sql, (num_val, limit * 6)) as cursor:
                 rows = await cursor.fetchall()
                 villas = [dict(row) for row in rows]
                 paphos_villas = [
                     v for v in villas
                     if is_paphos_location(v.get("text", "")) and not is_apartment_only(v.get("text", ""))
                 ]
-                return paphos_villas[:limit]
+                return deduplicate_villas(paphos_villas)[:limit]
 
         # 2. Определяем категорию (продажа или аренда)
         is_sale_query = any(kw in query_lower for kw in ("продам", "продаж", "купить", "sale", "прода", "покупк"))
@@ -391,7 +411,7 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
 
         if not specific_words:
             # Запрос содержал только общие слова категории и локации (например "Аренда вилла Пафос")
-            return villas[:limit]
+            return deduplicate_villas(villas)[:limit]
 
         # Иначе каждое специфичное слово должно быть в тексте
         matched_villas = []
@@ -400,4 +420,4 @@ async def search_villas(query: str, max_price: int = 50000, limit: int = 25) -> 
             if all(sw in text_lower for sw in specific_words):
                 matched_villas.append(v)
 
-        return matched_villas[:limit]
+        return deduplicate_villas(matched_villas)[:limit]
