@@ -24,44 +24,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - 
 
 async def run_dummy_http_server():
     """
-    HTTP-сервер для Render.com (Web Service) и Telegram Mini App!
-    Обслуживает API предложений из базы данных и статические файлы мини-приложения из папки webapp/.
+    Легковесный HTTP-сервер для Render.com (Web Service),
+    чтобы сервис успешно проходил проверку порта ($PORT) и работал бесплатно 24/7.
     """
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
 
     async def handle_ping(request):
-        return web.Response(text="✅ Villas Bot & Mini App are running 24/7!", status=200)
+        return web.Response(text="✅ Villas Bot & Userbot are running 24/7!", status=200)
 
-    async def handle_api_villas(request):
-        category = request.query.get("category", "rent_paphos")
-        try:
-            limit = int(request.query.get("limit", 50))
-        except ValueError:
-            limit = 50
-        try:
-            max_price = int(request.query.get("max_price", 100000000))
-        except ValueError:
-            max_price = 100000000
-        villas_list = await db.get_latest_villas(category=category, max_price=max_price, limit=limit)
-        return web.json_response(villas_list)
-
-    async def handle_root(request):
-        raise web.HTTPFound("/webapp/index.html")
-
-    app.router.add_get("/", handle_root)
+    app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
-    app.router.add_get("/api/villas", handle_api_villas)
-
-    webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
-    if os.path.exists(webapp_dir):
-        app.router.add_static("/webapp", webapp_dir)
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"🌐 [HTTP] Веб-сервер и Telegram Mini App запущены на порту {port} (/webapp/index.html)")
+    logging.info(f"🌐 [HTTP] Веб-сервер для Render.com успешно запущен на порту {port} (0.0.0.0:{port})")
 
 
 async def scan_history_on_startup(client: TelegramClient):
@@ -142,7 +121,7 @@ async def run_bot(bot: Bot):
 async def main():
     await db.init_db()
     logging.info("=====================================================")
-    logging.info("🚀 Запуск единого сервера: Telegram-Бот + Юзербот + Mini App")
+    logging.info("🚀 Запуск единого сервера: Telegram-Бот + Юзербот")
     logging.info("=====================================================")
     bot = Bot(token=config.BOT_TOKEN)
 

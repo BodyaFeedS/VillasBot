@@ -8,6 +8,13 @@ import config
 MIN_PRICE_THRESHOLD = 150
 MAX_STORE_PRICE = 20000
 
+# Строгий регулярный выражение для поиска ВИЛЛ и ДОМОВ с границами слов \b
+# Чтобы слово "дом" НЕ совпадало внутри слов "видом", "рядом", "поездом", "ходом"!
+VILLA_REGEX = re.compile(
+    r'\b(вилл[а-я]*|дом[ауеов]*|дома|доме|домов|коттедж[а-я]*|особняк[а-я]*|таунхаус[а-я]*|бунгало|мезонет[а-я]*|villa[s]?|house[s]?|townhouse[s]?|bungalow[s]?)\b',
+    re.IGNORECASE
+)
+
 
 def normalize_prices_in_text(text: str) -> str:
     """
@@ -27,7 +34,7 @@ def is_other_city(text: str) -> bool:
     """
     Проверяет, что объявление относится к ЛЮБОМУ ДРУГОМУ городу Кипра (Не Пафос):
     Лимасол, Лимассол, Ларнака, Никосия, Айя-Напа, Протарас, Фамагуста, Кирения,
-    а также популярные районы Лимасола (Агиос Тихонас, Гермасойя, Муттаяка и др.).
+    Епископи, а также популярные районы Лимасола/Ларнаки.
     """
     text_lower = text.lower()
     other_cities = [
@@ -39,7 +46,8 @@ def is_other_city(text: str) -> bool:
         "никоси", "никосие", "nicosi", "#никосия",
         "айя-нап", "ayia", "#айянапа",
         "протарас", "protaras", "#протарас",
-        "фамагуст", "famagust", "кирени", "kyrenia"
+        "фамагуст", "famagust", "кирени", "kyrenia",
+        "епископи", "episkopi", "епископие"
     ]
     return any(city in text_lower for city in other_cities)
 
@@ -58,7 +66,7 @@ def is_paphos_location(text: str) -> bool:
         "тала", "tala", "хлорак", "chlorak", "пейя", "pegeia", "peyia",
         "кония", "konia", "емба", "emba", "киссонерг", "kissonerg",
         "аргак", "като пафос", "цада", "tsada", "героскипу", "geroskipou",
-        "епископи", "полис", "polis", "афродита", "aphrodite",
+        "полис", "polis", "афродита", "aphrodite",
         "корал бэй", "coral bay", "mandria", "мандрия", "анавита",
         "куклия", "kouklia", "пейе", "тале", "хлораке"
     ]
@@ -83,8 +91,9 @@ def is_seeking_housing(text: str) -> bool:
 
 def is_apartment_only(text: str) -> bool:
     """
-    Отсеивает объявления, где сдаются/продаются исключительно квартиры, апартаменты или студии
-    (без упоминания вилл, домов, коттеджей или таунхаусов).
+    Отсеивает объявления, где сдаются/продаются квартиры, апартаменты или студии,
+    если это НЕ вилла или дом.
+    Использует строгий поиск VILLA_REGEX (чтобы "дом" не совпадал внутри "видом на море" или "рядом").
     """
     text_lower = text.lower()
     flat_words = [
@@ -92,32 +101,23 @@ def is_apartment_only(text: str) -> bool:
         "#квартира", "#апартаменты", "#студия",
         "1-комн", "2-комн", "3-комн", "однокомнат", "двухкомнат", "трехкомнат"
     ]
-    villa_words = [
-        "вилл", "дом", "коттедж", "особняк", "villa", "house",
-        "таунхаус", "townhouse", "бунгало", "мезонет", "#вилла", "#дом"
-    ]
     has_flat = any(fw in text_lower for fw in flat_words)
-    has_villa = any(vw in text_lower for vw in villa_words)
+    has_villa = bool(VILLA_REGEX.search(text_lower))
     return has_flat and not has_villa
 
 
 def is_property_for_sale(text: str) -> bool:
     """
-    100% гарантированная проверка, что объявление о ПРОДАЖЕ недвижимости (а не аренда!):
-    1. Если указана любая цена >= 15 000 € -> это ПРОДАЖА!
-    2. Ключевые слова продажи: продам, продажа, продается, рассрочка, без ндс, vat, титул...
+    Проверка, что объявление о ПРОДАЖЕ недвижимости (а не аренда!).
+    Требует явных слов продажи или покупки, исключая аренду.
     """
     text_norm = normalize_prices_in_text(text)
     text_lower = text_norm.lower()
 
-    all_numbers = re.findall(r'\b(\d{5,8})\b', text_lower)
-    for num_str in all_numbers:
-        try:
-            val = int(num_str)
-            if val >= 15000:
-                return True
-        except ValueError:
-            pass
+    rent_keywords = ["сдам", "сдается", "сдаётся", "аренд", "в аренду", "долгосрок", "посуточно"]
+    if any(rk in text_lower for rk in rent_keywords):
+        # Если явно сказано "сдается в аренду", это не продажа
+        return False
 
     sale_keywords = [
         "продам", "продается", "продаётся", "продажа", "продаже", "продаю", "продаж", "продад", "продаем", "продаём",
@@ -184,6 +184,10 @@ def extract_rental_price(text: str, max_price: int = MAX_STORE_PRICE) -> int | N
 
 
 def extract_sale_price(text: str) -> int:
+    """
+    Извлечение стоимости ПРОДАЖИ виллы в евро (от 50 000 до 50 000 000 €).
+    Если цена продажи не найдена, возвращает 0.
+    """
     text_norm = normalize_prices_in_text(text)
     text_lower = text_norm.lower()
     all_numbers = re.findall(r'\b(\d{5,8})\b', text_lower)
@@ -200,19 +204,22 @@ def extract_sale_price(text: str) -> int:
 
 def is_sale_villa_paphos(text: str) -> bool:
     """
-    #Продам #Вилла #Пафос (строго Пафос и пригороды, без Лимасола, Ларнаки и без обычных квартир!).
+    #Продам #Вилла #Пафос (строго Пафос и пригороды, без квартир, с использованием VILLA_REGEX).
     """
     if is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
         return False
 
-    text_lower = text.lower()
     if not is_property_for_sale(text):
         return False
 
-    villa_keywords = [
-        "вилл", "дом", "коттедж", "особняк", "villa", "house", "#вилла"
-    ]
-    return any(kw in text_lower for kw in villa_keywords)
+    if not VILLA_REGEX.search(text):
+        return False
+
+    price = extract_sale_price(text)
+    if price < 15000:
+        return False
+
+    return True
 
 
 def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, int | None]:
@@ -228,11 +235,14 @@ def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, i
     rent_keywords = [
         "аренд", "сдам", "сдаем", "сдаём", "сдается", "сдаётся", "сдаю", "сдать",
         "rent", "for rent", "letting", "долгосрок", "посуточно", "за ночь", "в сутки", "за сутки",
-        "на сутки", "/ночь", "/сутки", "per night", "на месяц", "#аренда",
-        "вилл", "дом", "коттедж", "особняк", "villa", "house", "таунхаус", "townhouse", "бунгало"
+        "на сутки", "/ночь", "/сутки", "per night", "на месяц", "#аренда"
     ]
     has_rent = any(kw in text_lower for kw in rent_keywords)
+    has_villa = bool(VILLA_REGEX.search(text_lower))
     price = extract_rental_price(text, max_price=max_price)
+
+    if not has_villa:
+        return False, None
 
     if price is not None and price <= max_price and (has_rent or "nedvizhka" in text_lower):
         return True, price
@@ -254,7 +264,8 @@ def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_P
 
     if is_sale_villa_paphos(text):
         price = extract_sale_price(text)
-        matched.append(("sale_villa", price))
+        if price >= 15000:
+            matched.append(("sale_villa", price))
 
     return matched
 
