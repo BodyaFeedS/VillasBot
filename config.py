@@ -9,7 +9,9 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8835292843:AAGTbcKGHVB1H6Pe3dfyTJwJsSvkNOYN8kw").strip()
 
 # Очищаем список каналов от лишних символов (ссылок https://t.me/ или знака @)
-raw_channels_str = os.getenv("CHANNELS", "nedvizhka_Ciprus")
+# Исключаем каналы обмена валют (exchange) и гарантируем отслеживание профильных каналов вилл:
+# @nedvizhka_Ciprus и @kvartiry_cyprus
+raw_channels_str = os.getenv("CHANNELS", "nedvizhka_Ciprus,kvartiry_cyprus")
 raw_channels = raw_channels_str.split(",")
 CHANNELS = []
 for ch in raw_channels:
@@ -17,8 +19,13 @@ for ch in raw_channels:
     if not ch:
         continue
     ch = re.sub(r'^(?:https?://)?(?:t\.me/)?@?', '', ch).strip('/')
-    if ch:
+    if ch and ch not in CHANNELS and "exchange" not in ch.lower():
         CHANNELS.append(ch)
+
+# Гарантируем, что оба ключевых канала всегда отслеживаются, даже если в .env указан только один
+for default_ch in ["nedvizhka_Ciprus", "kvartiry_cyprus"]:
+    if default_ch not in CHANNELS:
+        CHANNELS.append(default_ch)
 
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))
 MAX_PRICE = int(os.getenv("MAX_PRICE", 600))
