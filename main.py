@@ -19,7 +19,27 @@ from parser import notify_users
 from ai_classifier import classify_post_smart as classify_post
 from aiohttp import web
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
+# Настройка логирования
+class ConflictFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.warned = False
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if "TelegramConflictError" in msg or "terminated by other getUpdates request" in msg:
+            if not self.warned:
+                logging.warning("⚠️ [BOT] Telegram-бот уже запущен на хостинге (Render.com). Локальный бот уступает ему место без спама в логах, Юзербот продолжает работу.")
+                self.warned = True
+            return False
+        return True
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [%(levelname)s] - %(message)s"
+)
+logging.getLogger("aiogram").addFilter(ConflictFilter())
+logging.getLogger().addFilter(ConflictFilter())
 
 
 async def run_dummy_http_server():
