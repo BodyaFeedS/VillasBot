@@ -216,7 +216,7 @@ def is_sale_villa_paphos(text: str) -> bool:
         return False
 
     price = extract_sale_price(text)
-    if price < 15000:
+    if price > 0 and price < 15000:
         return False
 
     return True
@@ -244,8 +244,10 @@ def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, i
     if not has_villa:
         return False, None
 
-    if price is not None and price <= max_price and (has_rent or "nedvizhka" in text_lower):
-        return True, price
+    if has_rent or "nedvizhka" in text_lower or "kvartiry" in text_lower:
+        actual_price = price if price is not None else 0
+        if actual_price <= max_price:
+            return True, actual_price
 
     return False, None
 
@@ -264,8 +266,7 @@ def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_P
 
     if is_sale_villa_paphos(text):
         price = extract_sale_price(text)
-        if price >= 15000:
-            matched.append(("sale_villa", price))
+        matched.append(("sale_villa", price))
 
     return matched
 

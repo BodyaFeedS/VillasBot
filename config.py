@@ -34,3 +34,7 @@ DEFAULT_EXCHANGE_LIMIT = 50000
 # Ключи для реальных нейросетей (OpenAI или Google Gemini)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LAYIDCIHIqdEBoKmJeS6hD9VHBvxLoFcH3HrUNhPJB5w").strip()
+
+# Настройки Telegram API (Telethon Юзербот)
+API_ID = os.getenv("API_ID", "35554083").strip()
+API_HASH = os.getenv("API_HASH", "f3308dd71c039f71e565eabe1938e8f8").strip()

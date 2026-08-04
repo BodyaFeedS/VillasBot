@@ -96,15 +96,43 @@ async def periodic_channel_check(client: TelegramClient, bot: Bot):
                 logging.error(f"❌ Ошибка фоновой проверки @{channel_name}: {e}")
 
 
+async def ensure_joined_channels(client: TelegramClient):
+    """
+    Автоматически проверяет и при необходимости вступает во все отслеживаемые каналы/группы,
+    чтобы Telegram не блокировал чтение сообщений по юзернейму или ссылке.
+    """
+    try:
+        from telethon.tl.functions.channels import JoinChannelRequest
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+    except ImportError:
+        return
+
+    for ch in config.CHANNELS:
+        try:
+            entity = await client.get_entity(ch)
+            logging.info(f"✅ [USERBOT] Канал доступен: {getattr(entity, 'title', ch)} (id: {entity.id})")
+        except Exception as e:
+            logging.info(f"⚠️ Канал @{ch} ещё не в списке чатов аккаунта. Попытка автоматического вступления...")
+            try:
+                if "+" in ch or "joinchat" in ch:
+                    hash_part = ch.split("+")[-1] if "+" in ch else ch.split("joinchat/")[-1]
+                    await client(ImportChatInviteRequest(hash_part))
+                else:
+                    await client(JoinChannelRequest(ch))
+                logging.info(f"✅ [USERBOT] Успешно вступили в канал: {ch}!")
+            except Exception as e2:
+                logging.warning(f"⚠️ Не удалось автоматически вступить в {ch}: {e2}. Убедитесь, что аккаунт подписан на него в Telegram.")
+
+
 async def run_userbot(bot: Bot):
     """
     Запуск Telethon Юзербота. Читает сообщения как обычный Telegram-аккаунт.
     """
-    api_id = os.getenv("API_ID")
-    api_hash = os.getenv("API_HASH")
+    api_id = os.getenv("API_ID", config.API_ID)
+    api_hash = os.getenv("API_HASH", config.API_HASH)
 
     if not api_id or not api_hash:
-        logging.error("⚠️ API_ID или API_HASH не указаны в файле .env! Юзербот отключен.")
+        logging.error("⚠️ API_ID или API_HASH не указаны! Юзербот отключен.")
         return
 
     client = TelegramClient("userbot_session", int(api_id), api_hash)
@@ -131,6 +159,7 @@ async def run_userbot(bot: Bot):
 
     await client.start()
     logging.info("✅ [USERBOT] Успешно подключен! Мониторим каналы: " + ", ".join(config.CHANNELS))
+    await ensure_joined_channels(client)
     await scan_history_on_startup(client)
     asyncio.create_task(periodic_channel_check(client, bot))
     logging.info("🎧 [USERBOT] Мониторинг в реальном времени и фоновые проверки каждые 15 минут активны!")
