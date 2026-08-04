@@ -124,19 +124,10 @@ async def ensure_joined_channels(client: TelegramClient):
                 logging.warning(f"⚠️ Не удалось автоматически вступить в {ch}: {e2}. Убедитесь, что аккаунт подписан на него в Telegram.")
 
 
-async def run_userbot(bot: Bot):
+async def run_userbot_with_client(bot: Bot, client: TelegramClient):
     """
     Запуск Telethon Юзербота. Читает сообщения как обычный Telegram-аккаунт.
     """
-    api_id = os.getenv("API_ID", config.API_ID)
-    api_hash = os.getenv("API_HASH", config.API_HASH)
-
-    if not api_id or not api_hash:
-        logging.error("⚠️ API_ID или API_HASH не указаны! Юзербот отключен.")
-        return
-
-    client = TelegramClient("userbot_session", int(api_id), api_hash)
-
     @client.on(events.NewMessage(chats=config.CHANNELS))
     async def handler(event):
         channel_username = event.chat.username or str(event.chat_id)
@@ -157,7 +148,6 @@ async def run_userbot(bot: Bot):
                 }
                 await notify_users(bot, villa_data, cat, price)
 
-    await client.start()
     logging.info("✅ [USERBOT] Успешно подключен! Мониторим каналы: " + ", ".join(config.CHANNELS))
     await ensure_joined_channels(client)
     await scan_history_on_startup(client)
@@ -173,9 +163,16 @@ async def run_bot(bot: Bot):
     dp = Dispatcher()
     dp.include_router(start.router)
     dp.include_router(villas.router)
-    await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("✅ [BOT] Telegram-бот готов к работе! Отправьте /start в боте.")
-    await dp.start_polling(bot)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("✅ [BOT] Telegram-бот готов к работе! Отправьте /start в боте.")
+        await dp.start_polling(bot)
+    except Exception as e:
+        err_str = str(e)
+        if "Conflict" in err_str or "terminated by other getUpdates request" in err_str:
+            logging.warning("⚠️ [BOT] Telegram-бот уже работает на другом сервере (Render.com). Локальный polling бота остановлен без ошибок, Юзербот продолжает работу.")
+        else:
+            logging.error(f"❌ [BOT] Ошибка polling: {e}")
 
 
 async def main():
@@ -185,9 +182,42 @@ async def main():
     logging.info("=====================================================")
     bot = Bot(token=config.BOT_TOKEN)
 
+    api_id = os.getenv("API_ID", config.API_ID)
+    api_hash = os.getenv("API_HASH", config.API_HASH)
+    client = TelegramClient("userbot_session", int(api_id), api_hash)
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        print("\n=====================================================")
+        print("🔑 ТРЕБУЕТСЯ АВТОРИЗАЦИЯ ЮЗЕРБОТА В TELEGRAM")
+        print("=====================================================")
+        phone = input("📱 Введите номер телефона (например: +7999... или +380...): ").strip()
+        await client.send_code_request(phone)
+        code = input("💬 Введите код подтверждения из Telegram: ").strip()
+        try:
+            await client.sign_in(phone=phone, code=code)
+        except Exception as e:
+            err_msg = str(e)
+            if "SessionPasswordNeededError" in err_msg or "password" in err_msg.lower() or "2fa" in err_msg.lower():
+                print("\n🔒 У вас включена двухфакторная аутентификация (2FA)!")
+                for attempt in range(1, 6):
+                    password = input("🔑 Введите ваш облачный пароль 2FA: ").strip()
+                    try:
+                        await client.sign_in(password=password)
+                        break
+                    except Exception as pass_err:
+                        if "PasswordHashInvalidError" in str(pass_err) or "invalid" in str(pass_err).lower() or "password" in str(pass_err).lower():
+                            print(f"❌ Неверный пароль! (попытка {attempt}/5). Проверьте заглавные буквы (например, B вместо b), цифры или язык ввода.")
+                        else:
+                            raise pass_err
+            else:
+                raise e
+        me = await client.get_me()
+        print(f"✅ [USERBOT] Успешно авторизован аккаунт: {me.first_name} (@{me.username or me.id})!\n")
+
     await asyncio.gather(
         run_bot(bot),
-        run_userbot(bot),
+        run_userbot_with_client(bot, client),
         run_dummy_http_server()
     )
 

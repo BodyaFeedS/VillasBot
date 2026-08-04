@@ -202,21 +202,78 @@ def extract_sale_price(text: str) -> int:
     return max(prices) if prices else 0
 
 
+def get_villa_intent(text: str) -> str | None:
+    """
+    Интеллектуальная классификация категории: 'SALE' (продажа виллы) или 'RENT' (аренда виллы).
+    Гарантирует 100% взаимную исключительность:
+    - Аренда никогда не станет продажей.
+    - Продажа никогда не станет арендой.
+    """
+    text_lower = text.lower()
+
+    # 1. Сильные маркеры ПРОДАЖИ (хештеги и однозначные фразы)
+    strong_sale_markers = [
+        "#продам", "#продажа", "#продается", "#sale", "#forsale",
+        "продам вилл", "продается вилл", "продаётся вилл", "продажа вилл",
+        "продам дом", "продается дом", "продаётся дом", "продажа дом",
+        "купить вилл", "купить дом", "for sale", "титул в наличии",
+        "собственность от застройщика", "цена продажи"
+    ]
+    is_strong_sale = any(m in text_lower for m in strong_sale_markers)
+
+    # 2. Сильные маркеры АРЕНДЫ (хештеги и однозначные фразы)
+    strong_rent_markers = [
+        "#аренда", "#сдам", "#сдается", "#сдаётся", "#rent", "#forrent",
+        "сдам вилл", "сдается вилл", "сдаётся вилл", "аренда вилл",
+        "сдам дом", "сдается дом", "сдаётся дом", "аренда дом",
+        "на длительный срок", "долгосрок", "посуточно", "в месяц", "/мес", "per month"
+    ]
+    is_strong_rent = any(m in text_lower for m in strong_rent_markers)
+
+    # 3. Извлекаем цены
+    sale_price = extract_sale_price(text)       # числа >= 50 000
+    rent_price = extract_rental_price(text)     # числа <= 15 000
+
+    # Если есть сильный маркер продажи И нет сильного маркера аренды
+    if is_strong_sale and not is_strong_rent:
+        return "SALE"
+
+    # Если есть сильный маркер аренды И нет сильного маркера продажи
+    if is_strong_rent and not is_strong_sale:
+        return "RENT"
+
+    # Если в тексте указана цена >= 50 000 — это однозначно ПРОДАЖА (даже если упомянута аренда как инвестиция)
+    if sale_price >= 50000:
+        return "SALE"
+
+    # Если указана цена <= 15 000 и нет большой цены продажи — это АРЕНДА
+    if rent_price is not None and rent_price <= 15000:
+        return "RENT"
+
+    # Если остались общие слова
+    general_sale = any(w in text_lower for w in ["продам", "продажа", "продается", "купить", "selling"])
+    general_rent = any(w in text_lower for w in ["сдам", "сдается", "аренд", "долгосрок", "letting"])
+
+    if general_sale and not general_rent:
+        return "SALE"
+    if general_rent and not general_sale:
+        return "RENT"
+
+    return None
+
+
 def is_sale_villa_paphos(text: str) -> bool:
     """
     #Продам #Вилла #Пафос (строго Пафос и пригороды, без квартир, с использованием VILLA_REGEX).
+    Использует get_villa_intent == 'SALE', чтобы аренда НИКОГДА не попала в продажу.
     """
     if is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
-        return False
-
-    if not is_property_for_sale(text):
         return False
 
     if not VILLA_REGEX.search(text):
         return False
 
-    price = extract_sale_price(text)
-    if price > 0 and price < 15000:
+    if get_villa_intent(text) != "SALE":
         return False
 
     return True
@@ -225,29 +282,21 @@ def is_sale_villa_paphos(text: str) -> bool:
 def is_rent_paphos(text: str, max_price: int = MAX_STORE_PRICE) -> tuple[bool, int | None]:
     """
     #аренда #вилла #пафос (строго аренда ВИЛЛ и ДОМОВ в Пафосе, БЕЗ КВАРТИР!).
-    Если это продажа (is_property_for_sale == True) или квартира (is_apartment_only == True), объявление отсеивается!
+    Использует get_villa_intent == 'RENT', чтобы продажа НИКОГДА не попала в аренду.
     """
-    if is_property_for_sale(text) or is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
+    if is_seeking_housing(text) or not is_paphos_location(text) or is_apartment_only(text):
         return False, None
 
-    text_lower = text.lower()
+    if not VILLA_REGEX.search(text):
+        return False, None
 
-    rent_keywords = [
-        "аренд", "сдам", "сдаем", "сдаём", "сдается", "сдаётся", "сдаю", "сдать",
-        "rent", "for rent", "letting", "долгосрок", "посуточно", "за ночь", "в сутки", "за сутки",
-        "на сутки", "/ночь", "/сутки", "per night", "на месяц", "#аренда"
-    ]
-    has_rent = any(kw in text_lower for kw in rent_keywords)
-    has_villa = bool(VILLA_REGEX.search(text_lower))
+    if get_villa_intent(text) != "RENT":
+        return False, None
+
     price = extract_rental_price(text, max_price=max_price)
-
-    if not has_villa:
-        return False, None
-
-    if has_rent or "nedvizhka" in text_lower or "kvartiry" in text_lower:
-        actual_price = price if price is not None else 0
-        if actual_price <= max_price:
-            return True, actual_price
+    actual_price = price if price is not None else 0
+    if actual_price <= max_price:
+        return True, actual_price
 
     return False, None
 
@@ -257,6 +306,7 @@ def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_P
     Классифицирует публикации строго на ВИЛЛЫ и ДОМА в Пафосе (без квартир!):
     1) rent_paphos (аренда вилл и домов в Пафосе)
     2) sale_villa (продажа вилл и домов в Пафосе)
+    Аренда и продажа строго взаимоисключаются.
     """
     matched = []
 
@@ -272,4 +322,7 @@ def classify_post_nlp(text: str, channel: str = "", max_price: int = MAX_STORE_P
 
 
 async def classify_post_smart(text: str, channel: str = "") -> list[tuple[str, int]]:
+    """
+    Интеллектуальная классификация (с гарантией, что аренда не попадает в продажу и наоборот).
+    """
     return classify_post_nlp(text, channel, max_price=MAX_STORE_PRICE)
